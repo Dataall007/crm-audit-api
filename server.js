@@ -5,7 +5,10 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors({ origin: [process.env.FRONTEND_URL || "*"] }));
+app.use(cors({
+  origin: (origin, cb) => cb(null, true), // allow all origins incl. null (local file)
+  credentials: true,
+}));
 app.use(express.json({ limit: "2mb" }));
 
 // Raw body for LemonSqueezy webhook signature verification
