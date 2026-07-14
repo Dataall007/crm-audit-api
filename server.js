@@ -2,6 +2,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 
+const { SUPABASE_URL, SUPABASE_KEY } = require("./config");
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -20,8 +22,8 @@ app.get("/health", (req, res) => res.json({
   // Presence-only (booleans, never values) so we can diagnose config remotely.
   env: {
     anthropic: !!process.env.ANTHROPIC_API_KEY,
-    supabase_url: !!process.env.SUPABASE_URL,
-    supabase_key: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    supabase_url: !!SUPABASE_URL,
+    supabase_key: !!SUPABASE_KEY,
     resend: !!process.env.RESEND_API_KEY,
     lemonsqueezy: !!process.env.LS_WEBHOOK_SECRET,
   },

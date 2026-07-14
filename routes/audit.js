@@ -2,8 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { v4: uuidv4 } = require("uuid");
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const { SUPABASE_URL, SUPABASE_KEY } = require("../config");
 
 router.post("/", async (req, res, next) => {
   try {

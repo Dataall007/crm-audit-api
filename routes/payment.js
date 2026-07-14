@@ -3,8 +3,7 @@ const router = express.Router();
 const crypto = require("crypto");
 const { Resend } = require("resend");
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const { SUPABASE_URL, SUPABASE_KEY } = require("../config");
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://agent7d.com";
 
 function getResend() { return new Resend(process.env.RESEND_API_KEY); }

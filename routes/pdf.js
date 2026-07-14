@@ -4,8 +4,7 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const { SUPABASE_URL, SUPABASE_KEY } = require("../config");
 
 // GET /api/pdf/preview/:auditId — partial (blurred after page 3)
 router.get("/preview/:auditId", async (req, res, next) => {
