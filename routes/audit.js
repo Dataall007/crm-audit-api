@@ -38,12 +38,33 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-// Fetch full audit (for paid users)
+// Fetch an audit for report.html. Returns the full preview (free tier);
+// paid users additionally get the complete audit payload under `audit_full`.
 router.get("/:auditId", async (req, res, next) => {
   try {
     const row = await getFromSupabase(req.params.auditId);
     if (!row) return res.status(404).json({ error: "Audit not found" });
-    res.json({ paid: row.paid, score: row.score, auditId: row.audit_id, companyName: row.company_name });
+
+    const a = row.audit_json || {};
+    const payload = {
+      auditId: row.audit_id,
+      companyName: row.company_name,
+      paid: !!row.paid,
+      score: a.score ?? row.score,
+      revenue_leakage: a.revenue_leakage ?? row.revenue_leakage,
+      critical_issues: a.critical_issues || [],
+      data_quality_grade: a.data_quality_grade || null,
+      pipeline_health_grade: a.pipeline_health_grade || null,
+      quick_wins_preview: (a.quick_wins || [])
+        .slice(0, 3)
+        .map(w => ({ title: w.title, impact_usd: w.impact_usd })),
+      narrative: a.narrative || "",
+    };
+
+    // Paid users get everything (all quick wins, automation gaps, roadmap).
+    if (row.paid) payload.audit_full = a;
+
+    res.json(payload);
   } catch (err) {
     next(err);
   }
@@ -96,7 +117,9 @@ Be specific with numbers. Base revenue_leakage on: stale items Ã— average deal Ã
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
-      max_tokens: 4096,
+      // 4096 truncated mid-JSON (10 quick wins + 5 gaps + roadmap + narrative
+      // routinely exceed it), producing invalid JSON and a 500. 8192 is safe.
+      max_tokens: 8192,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     }),
@@ -120,7 +143,12 @@ Be specific with numbers. Base revenue_leakage on: stale items Ã— average deal Ã
 }
 
 async function saveToSupabase(row) {
-  if (!SUPABASE_URL || !SUPABASE_KEY) return;
+  // The whole flow depends on persistence: report.html reads the audit back by
+  // id. If we can't save, fail loudly rather than returning a 200 with an
+  // auditId that GET /:id will 404 on.
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    throw new Error("Supabase not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing)");
+  }
   const r = await fetch(`${SUPABASE_URL}/rest/v1/crm_audits`, {
     method: "POST",
     headers: {
@@ -131,7 +159,11 @@ async function saveToSupabase(row) {
     },
     body: JSON.stringify(row),
   });
-  if (!r.ok) console.error("[supabase] insert error:", await r.text());
+  if (!r.ok) {
+    const body = await r.text();
+    console.error("[supabase] insert error:", body);
+    throw new Error(`Supabase insert failed (${r.status}): ${body}`);
+  }
 }
 
 async function getFromSupabase(auditId) {
