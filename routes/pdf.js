@@ -55,11 +55,14 @@ async function generatePdf(html) {
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "networkidle0" });
-    return await page.pdf({
+    const pdf = await page.pdf({
       format: "A4",
       printBackground: true,
       margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
     });
+    // puppeteer-core returns a Uint8Array; wrap in Buffer so Express res.send()
+    // streams it as binary instead of JSON-serializing it.
+    return Buffer.from(pdf);
   } finally {
     await browser.close();
   }
