@@ -79,11 +79,12 @@ router.post("/checkout", async (req, res, next) => {
 
 function buildLemonSqueezyUrl({ auditId, email, company }) {
   const base = `https://agent7d.lemonsqueezy.com/checkout/buy/${LS_VARIANT_ID}`;
-  const params = new URLSearchParams({
-    "checkout[email]": email || "",
-    "checkout[custom][audit_id]": auditId,
-    "checkout[custom][company]": company || "",
-  });
+  // Only include params that have values. An empty checkout[email]= makes
+  // LemonSqueezy return 422, and the report button posts no email.
+  const params = new URLSearchParams();
+  params.set("checkout[custom][audit_id]", auditId);
+  if (email) params.set("checkout[email]", email);
+  if (company) params.set("checkout[custom][company]", company);
   return `${base}?${params.toString()}`;
 }
 
