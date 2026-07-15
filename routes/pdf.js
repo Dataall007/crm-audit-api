@@ -42,17 +42,27 @@ router.get("/full/:auditId", async (req, res, next) => {
 });
 
 async function generatePdf(html) {
-  const puppeteer = require("puppeteer");
-  const browser = await puppeteer.launch({ args: ["--no-sandbox", "--disable-setuid-sandbox"] });
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: "networkidle0" });
-  const pdf = await page.pdf({
-    format: "A4",
-    printBackground: true,
-    margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
+  // Use @sparticuz/chromium's bundled Chromium (ships in node_modules) instead
+  // of full puppeteer's build-time download, which Render doesn't reliably
+  // preserve into the runtime environment.
+  const chromium = require("@sparticuz/chromium");
+  const puppeteer = require("puppeteer-core");
+  const browser = await puppeteer.launch({
+    args: chromium.args,
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
   });
-  await browser.close();
-  return pdf;
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "networkidle0" });
+    return await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
+    });
+  } finally {
+    await browser.close();
+  }
 }
 
 function buildReportHtml(row, fullAccess) {
