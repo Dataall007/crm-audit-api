@@ -6,6 +6,15 @@ const { Resend } = require("resend");
 const { SUPABASE_URL, SUPABASE_KEY } = require("../config");
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://agent7d.com";
 
+// LemonSqueezy's /checkout/buy/ path needs the store buy-link UUID, NOT the
+// numeric variant/product ID (those 404). Warn loudly at boot if it looks wrong.
+const LS_VARIANT_ID = process.env.LS_VARIANT_ID;
+if (!LS_VARIANT_ID) {
+  console.warn("[payment] ⚠️ LS_VARIANT_ID is missing — checkout will 404.");
+} else if (/^\d+$/.test(LS_VARIANT_ID)) {
+  console.warn(`[payment] ⚠️ LS_VARIANT_ID="${LS_VARIANT_ID}" is numeric — /checkout/buy/ needs the buy-link UUID (e.g. c8ee4e0e-…) or it will 404.`);
+}
+
 function getResend() { return new Resend(process.env.RESEND_API_KEY); }
 
 // LemonSqueezy webhook (raw body for signature)
@@ -69,7 +78,7 @@ router.post("/checkout", async (req, res, next) => {
 });
 
 function buildLemonSqueezyUrl({ auditId, email, company }) {
-  const base = `https://agent7d.lemonsqueezy.com/checkout/buy/${process.env.LS_VARIANT_ID}`;
+  const base = `https://agent7d.lemonsqueezy.com/checkout/buy/${LS_VARIANT_ID}`;
   const params = new URLSearchParams({
     "checkout[email]": email || "",
     "checkout[custom][audit_id]": auditId,
