@@ -47,25 +47,41 @@ async function generatePdf(html) {
   // preserve into the runtime environment.
   const chromium = require("@sparticuz/chromium");
   const puppeteer = require("puppeteer-core");
-  const browser = await puppeteer.launch({
-    args: chromium.args,
-    executablePath: await chromium.executablePath(),
-    headless: chromium.headless,
-  });
-  try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
-    const pdf = await page.pdf({
-      format: "A4",
-      printBackground: true,
-      margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
-    });
-    // puppeteer-core returns a Uint8Array; wrap in Buffer so Express res.send()
-    // streams it as binary instead of JSON-serializing it.
-    return Buffer.from(pdf);
-  } finally {
-    await browser.close();
+
+  // On a cold start the Chromium binary is still being extracted to /tmp when
+  // the first launch tries to exec it → spawn ETXTBSY. Retry briefly so the
+  // first request after Render spins the service back up doesn't fail.
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let browser;
+    try {
+      browser = await puppeteer.launch({
+        args: chromium.args,
+        executablePath: await chromium.executablePath(),
+        headless: chromium.headless,
+      });
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: "networkidle0" });
+      const pdf = await page.pdf({
+        format: "A4",
+        printBackground: true,
+        margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
+      });
+      // puppeteer-core returns a Uint8Array; wrap in Buffer so Express res.send()
+      // streams it as binary instead of JSON-serializing it.
+      return Buffer.from(pdf);
+    } catch (err) {
+      lastErr = err;
+      if (String(err.message).includes("ETXTBSY") && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      throw err;
+    } finally {
+      if (browser) await browser.close();
+    }
   }
+  throw lastErr;
 }
 
 function buildReportHtml(row, fullAccess) {
