@@ -11,10 +11,11 @@ app.use(cors({
   origin: (origin, cb) => cb(null, true), // allow all origins incl. null (local file)
   credentials: true,
 }));
+// LemonSqueezy webhook needs the RAW body for HMAC signature verification, so it
+// must be registered BEFORE express.json — otherwise json parses the body into an
+// object, the signature is computed over "[object Object]", and it always fails.
+app.use("/api/payment/webhook", express.raw({ type: "*/*" }));
 app.use(express.json({ limit: "2mb" }));
-
-// Raw body for LemonSqueezy webhook signature verification
-app.use("/api/payment/webhook", express.raw({ type: "application/json" }));
 
 app.get("/health", (req, res) => res.json({
   ok: true,

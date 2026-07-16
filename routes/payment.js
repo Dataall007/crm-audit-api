@@ -22,9 +22,13 @@ router.post("/webhook", async (req, res) => {
   try {
     const sig = req.headers["x-signature"];
     const secret = process.env.LS_WEBHOOK_SECRET;
-    if (secret && sig) {
+    // If a secret is configured, REQUIRE a valid signature (don't skip when the
+    // header is absent — that would let anyone mark audits paid).
+    if (secret) {
       const hmac = crypto.createHmac("sha256", secret).update(req.body).digest("hex");
-      if (hmac !== sig) return res.status(401).json({ error: "Invalid signature" });
+      const valid = typeof sig === "string" && sig.length === hmac.length &&
+        crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(sig));
+      if (!valid) return res.status(401).json({ error: "Invalid signature" });
     }
 
     const payload = JSON.parse(req.body.toString());
