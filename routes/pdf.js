@@ -35,8 +35,11 @@ router.get("/full/:auditId", async (req, res, next) => {
 
     const html = buildReportHtml(row, true);
     const pdf = await generatePdf(html);
+    // HTTP headers must be ASCII — strip non-ASCII from company name (e.g. Hebrew)
+    // or setHeader throws "Invalid character in header content".
+    const safeCompany = (row.company_name || "report").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "report";
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="crm-audit-${row.company_name?.replace(/\s+/g, "-")}-${auditId}.pdf"`);
+    res.setHeader("Content-Disposition", `attachment; filename="crm-audit-${safeCompany}-${auditId}.pdf"`);
     res.send(pdf);
   } catch (err) { next(err); }
 });
