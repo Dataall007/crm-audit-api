@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 
 const { SUPABASE_URL, SUPABASE_KEY } = require("../config");
@@ -60,8 +61,16 @@ router.get("/:auditId", async (req, res, next) => {
       narrative: a.narrative || "",
     };
 
-    // Paid users get everything (all quick wins, automation gaps, roadmap).
-    if (row.paid) payload.audit_full = a;
+    // Paid users get everything (all quick wins, automation gaps, roadmap) plus
+    // a token so report.html can link to the full PDF (same token /pdf/full expects).
+    if (row.paid) {
+      payload.audit_full = a;
+      payload.pdf_token = crypto
+        .createHmac("sha256", process.env.LS_WEBHOOK_SECRET || "secret")
+        .update(row.audit_id)
+        .digest("hex")
+        .slice(0, 16);
+    }
 
     res.json(payload);
   } catch (err) {
