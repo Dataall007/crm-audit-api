@@ -6,6 +6,18 @@ const fs = require("fs");
 
 const { SUPABASE_URL, SUPABASE_KEY } = require("../config");
 
+const chromium = require("@sparticuz/chromium");
+const puppeteer = require("puppeteer-core");
+
+// @sparticuz/chromium unpacks its Chromium binary to /tmp on first use. If two
+// requests (or a request during boot) trigger that concurrently, exec'ing the
+// still-being-written file fails with "spawn ETXTBSY". Kick the extraction off
+// once at boot and memoize the promise so every caller awaits the SAME unpack.
+const chromiumReady = chromium
+  .executablePath()
+  .then((p) => { console.log("[pdf] chromium ready:", p); return p; })
+  .catch((e) => { console.warn("[pdf] chromium pre-extract failed:", e.message); return null; });
+
 // GET /api/pdf/preview/:auditId — partial (blurred after page 3)
 router.get("/preview/:auditId", async (req, res, next) => {
   try {
@@ -45,22 +57,18 @@ router.get("/full/:auditId", async (req, res, next) => {
 });
 
 async function generatePdf(html) {
-  // Use @sparticuz/chromium's bundled Chromium (ships in node_modules) instead
-  // of full puppeteer's build-time download, which Render doesn't reliably
-  // preserve into the runtime environment.
-  const chromium = require("@sparticuz/chromium");
-  const puppeteer = require("puppeteer-core");
+  // Await the single memoized extraction (see chromiumReady above) rather than
+  // triggering a fresh unpack per call.
+  const execPath = (await chromiumReady) || (await chromium.executablePath());
 
-  // On a cold start the Chromium binary is still being extracted to /tmp when
-  // the first launch tries to exec it → spawn ETXTBSY. Retry briefly so the
-  // first request after Render spins the service back up doesn't fail.
+  // Belt-and-braces: if the binary is still settling, back off and retry.
   let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     let browser;
     try {
       browser = await puppeteer.launch({
         args: chromium.args,
-        executablePath: await chromium.executablePath(),
+        executablePath: execPath,
         headless: chromium.headless,
       });
       const page = await browser.newPage();
@@ -75,8 +83,9 @@ async function generatePdf(html) {
       return Buffer.from(pdf);
     } catch (err) {
       lastErr = err;
-      if (String(err.message).includes("ETXTBSY") && attempt < 2) {
-        await new Promise((r) => setTimeout(r, 1000));
+      const transient = /ETXTBSY|Failed to launch|Target closed/i.test(String(err.message));
+      if (transient && attempt < 5) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
       throw err;

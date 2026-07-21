@@ -54,7 +54,7 @@ router.post("/webhook", async (req, res) => {
 
     // Send delivery email
     await getResend().emails.send({
-      from: "agent7d <support@agent7d.com>",
+      from: "Agent7D <support@agent7d.com>",
       to: email,
       subject: `Your Complete CRM Audit Report — ${company}`,
       html: buildDeliveryEmail({ company, pdfUrl, auditId }),
