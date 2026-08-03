@@ -96,6 +96,22 @@ async function generatePdf(html) {
   throw lastErr;
 }
 
+// data_citation embeds the client's own column name, which comes straight from
+// their Monday board — a column called `<b>Value` must not reshape the report.
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
+}
+
+// Short provenance label under the headline figure. Pre-v2 audits have no
+// `confidence` key and simply render without a badge.
+const CONFIDENCE_BADGES = {
+  high: { text: "High confidence — real deal values", cls: "conf-high" },
+  medium: { text: "Medium confidence — self-reported average deal value", cls: "conf-medium" },
+  low: { text: "Insufficient data — no deal value column detected", cls: "conf-low" },
+};
+
 function buildReportHtml(row, fullAccess) {
   const a = row.audit_json || {};
   const qw = a.quick_wins || [];
@@ -129,7 +145,11 @@ function buildReportHtml(row, fullAccess) {
   .score-label { font-size: 11px; color: #9ca3af; margin-top: 4px; letter-spacing: 0.05em; text-transform: uppercase; }
   .leakage-box { background: #fff1f2; border: 1.5px solid #fecdd3; border-radius: 12px; padding: 24px 32px; margin: 24px 0; }
   .leakage-amount { font-size: 42px; font-weight: 800; color: #e11d48; letter-spacing: -0.02em; }
-  .leakage-label { font-size: 13px; color: #9f1239; margin-top: 2px; }
+  .leakage-label { font-size: 13px; color: #9f1239; margin-top: 6px; line-height: 1.5; }
+  .conf-badge { display: inline-block; margin-top: 10px; padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; }
+  .conf-high { background: #dcfce7; color: #166534; }
+  .conf-medium { background: #fef3c7; color: #92400e; }
+  .conf-low { background: #f3f4f6; color: #4b5563; }
   .issue-list { list-style: none; }
   .issue-list li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
   .issue-list li::before { content: "✗"; color: #e11d48; font-weight: 700; flex-shrink: 0; }
@@ -178,9 +198,20 @@ function buildReportHtml(row, fullAccess) {
       <div style="font-size:10px;color:#9ca3af;margin-top:4px">/100</div>
     </div>
     <div class="leakage-box" style="flex:1">
-      <div style="font-size:11px;color:#9f1239;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">💰 Estimated Annual Revenue Leakage</div>
+      <div style="font-size:11px;color:#9f1239;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">💰 Revenue at Risk</div>
       <div class="leakage-amount">$${(a.revenue_leakage || 0).toLocaleString()}</div>
-      <div class="leakage-label">Based on pipeline analysis, data quality gaps, and process inefficiencies</div>
+      <div class="leakage-label">${
+        // v2 states exactly where the number came from. Pre-v2 audits fall back to
+        // the original generic line rather than showing nothing.
+        a.data_citation
+          ? esc(a.data_citation)
+          : "Based on pipeline analysis, data quality gaps, and process inefficiencies"
+      }</div>
+      ${
+        CONFIDENCE_BADGES[a.confidence]
+          ? `<div class="conf-badge ${CONFIDENCE_BADGES[a.confidence].cls}">${CONFIDENCE_BADGES[a.confidence].text}</div>`
+          : ""
+      }
     </div>
   </div>
 
@@ -286,3 +317,5 @@ async function supabaseGet(auditId) {
 }
 
 module.exports = router;
+// Exported so the report can be rendered and eyeballed without a Chromium run.
+module.exports.buildReportHtml = buildReportHtml;
