@@ -56,41 +56,77 @@ router.get("/full/:auditId", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-async function generatePdf(html) {
-  // Await the single memoized extraction (see chromiumReady above) rather than
-  // triggering a fresh unpack per call.
-  const execPath = (await chromiumReady) || (await chromium.executablePath());
+const PDF_OPTIONS = {
+  format: "A4",
+  printBackground: true,
+  margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
+};
 
-  // Belt-and-braces: if the binary is still settling, back off and retry.
+// One browser for the process, not one per request — same reasoning as
+// chromiumReady above, one level up. Launching cost ~400ms and closing another
+// 270-870ms on every single PDF, paid again for each report.
+let browserPromise = null;
+
+function launchBrowser() {
+  return (async () => {
+    const execPath = (await chromiumReady) || (await chromium.executablePath());
+    const browser = await puppeteer.launch({
+      args: chromium.args,
+      executablePath: execPath,
+      headless: chromium.headless,
+    });
+    console.log("[pdf] browser launched");
+    return browser;
+  })();
+}
+
+async function getBrowser() {
   let lastErr;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    let browser;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = browserPromise || (browserPromise = launchBrowser());
     try {
-      browser = await puppeteer.launch({
-        args: chromium.args,
-        executablePath: execPath,
-        headless: chromium.headless,
-      });
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: "networkidle0" });
-      const pdf = await page.pdf({
-        format: "A4",
-        printBackground: true,
-        margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
-      });
-      // puppeteer-core returns a Uint8Array; wrap in Buffer so Express res.send()
-      // streams it as binary instead of JSON-serializing it.
-      return Buffer.from(pdf);
+      const browser = await current;
+      if (browser.isConnected()) return browser;
+      lastErr = new Error("browser disconnected");
     } catch (err) {
       lastErr = err;
-      const transient = /ETXTBSY|Failed to launch|Target closed/i.test(String(err.message));
-      if (transient && attempt < 5) {
-        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
-        continue;
-      }
-      throw err;
+    }
+    // Swap in a replacement, but only if nobody beat us to it: two requests can
+    // observe the same dead browser, and the second must not discard the first's
+    // fresh launch (which would leak a Chromium process).
+    if (browserPromise === current) browserPromise = launchBrowser();
+  }
+  throw lastErr || new Error("could not obtain a browser");
+}
+
+// Warm at boot so the first report of the day doesn't pay for the launch. The
+// catch only marks the rejection handled — browserPromise still rejects, and
+// getBrowser() relaunches on the next request.
+browserPromise = launchBrowser();
+browserPromise.catch(e => console.warn("[pdf] initial browser launch failed:", e.message));
+
+async function generatePdf(html) {
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    let page;
+    try {
+      const browser = await getBrowser();
+      page = await browser.newPage();
+      await page.setContent(html, { waitUntil: "networkidle0" });
+      // puppeteer-core returns a Uint8Array; wrap in Buffer so Express res.send()
+      // streams it as binary instead of JSON-serializing it.
+      return Buffer.from(await page.pdf(PDF_OPTIONS));
+    } catch (err) {
+      lastErr = err;
+      const transient = /ETXTBSY|Failed to launch|Target closed|Session closed|Connection closed|detached|Protocol error/i.test(String(err.message));
+      if (!transient || attempt === 3) throw err;
+      // The shared browser may have died mid-request — drop it so the next
+      // attempt gets a fresh one instead of retrying against a dead process.
+      if (browserPromise) browserPromise = null;
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     } finally {
-      if (browser) await browser.close();
+      // Close the page, never the browser.
+      if (page) await page.close().catch(() => {});
     }
   }
   throw lastErr;
@@ -134,9 +170,22 @@ function buildReportHtml(row, fullAccess) {
   const gaps = a.automation_gaps || [];
   const roadmap = a.roadmap || {};
 
-  const locked = (content) => fullAccess
+  // The teaser used to render the real content behind `filter: blur(5px)`. Chromium
+  // cannot keep a filtered region as vector text, so it rasterised those sections:
+  // the free preview weighed 3,314,022 bytes against 216,710 for the full report, and
+  // page.pdf() took 2,593ms instead of 615ms. Measured by stripping only the filter.
+  //
+  // It also shipped the paid content inside the free download — blur is a visual
+  // effect, not redaction, and is reversible in principle. Withholding the content
+  // outright is both faster and actually private.
+  const locked = (content, teaser) => fullAccess
     ? content
-    : `<div style="position:relative;overflow:hidden"><div style="filter:blur(5px);user-select:none">${content}</div><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,10,10,0.55)"><div style="text-align:center;color:#fff"><div style="font-size:28px;margin-bottom:8px">🔒</div><div style="font-size:14px;font-weight:700">Unlock Full Report — $299</div><div style="font-size:12px;opacity:0.7;margin-top:4px">agent7d.com/tools/crm-audit</div></div></div></div>`;
+    : `<div style="border:1.5px dashed #d1d5db;border-radius:12px;background:#f9fafb;padding:48px 32px;text-align:center;page-break-inside:avoid">
+         <div style="font-size:32px;margin-bottom:10px">🔒</div>
+         ${teaser ? `<div style="font-size:14px;font-weight:700;color:#374151;margin-bottom:6px">${teaser}</div>` : ""}
+         <div style="font-size:15px;font-weight:800;color:#0a0a0a;margin-bottom:4px">Unlock Full Report — $299</div>
+         <div style="font-size:12px;color:#6b7280">agent7d.com/tools/crm-audit</div>
+       </div>`;
 
   const gradeColor = (g) => ({ A: "#10b981", B: "#3b82f6", C: "#f59e0b", D: "#ef4444", F: "#dc2626" }[g] || "#6b7280");
   const effortColor = (e) => ({ Low: "#10b981", Medium: "#f59e0b", High: "#ef4444" }[e] || "#6b7280");
@@ -286,7 +335,7 @@ function buildReportHtml(row, fullAccess) {
   <h2 style="margin-bottom:24px">${qw.length} Quick Wins — Ranked by ROI</h2>
   ${(fullAccess ? qw : qw.slice(0, 3)).map((w, i) => renderQuickWin(w, i + 1, true)).join("")}
 
-  ${fullAccess ? "" : locked(qw.slice(3).map((w, i) => renderQuickWin(w, i + 4, false)).join(""))}
+  ${fullAccess ? "" : locked("", `${Math.max(qw.length - 3, 0)} more quick wins, ranked by ROI`)}
 </div>
 
 <!-- PAGE 3: Automation Gaps + Roadmap (locked if not paid) -->
@@ -318,7 +367,7 @@ function buildReportHtml(row, fullAccess) {
         </div>
       </div>
     </div>
-  `)}
+  `, `${gaps.length} automation gaps and your 90-day implementation roadmap`)}
 </div>
 
 <div class="footer-bar">
@@ -341,3 +390,9 @@ async function supabaseGet(auditId) {
 module.exports = router;
 // Exported so the report can be rendered and eyeballed without a Chromium run.
 module.exports.buildReportHtml = buildReportHtml;
+module.exports.generatePdf = generatePdf;
+// Test hook: kills the shared browser so crash recovery can be exercised.
+module.exports.__killBrowserForTest = async () => {
+  const b = await browserPromise;
+  await b.close();
+};
