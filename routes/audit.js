@@ -204,6 +204,23 @@ function resolveLeakage(computed, avgDealInput) {
   };
 }
 
+// The prompt tells Claude the computed health score, so a faithful narrative quotes
+// THAT number — while the box shows reconcileScore()'s output, which is allowed to
+// differ. Observed live: narrative "a CRM health score of 30", box 28. Claude was not
+// wrong; we changed the number after asking it. Realign the prose to what is shown.
+//
+// Deliberately narrow: only "health score" is matched. The narrative also quotes a
+// data-quality score out of 100, and rewriting that to the health score would turn
+// one cosmetic mismatch into a wrong number.
+const HEALTH_SCORE_IN_TEXT_RE = /(health\s+score\s*(?:of|is|at|:)?\s*)(\d{1,3})\b/gi;
+
+function alignScoreInNarrative(narrative, finalScore) {
+  if (typeof narrative !== "string" || !Number.isFinite(finalScore)) return narrative;
+  return narrative.replace(HEALTH_SCORE_IN_TEXT_RE, (match, prefix, stated) =>
+    Number(stated) === finalScore ? match : `${prefix}${finalScore}`
+  );
+}
+
 // Keep the reported score tethered to the computed health score. Claude may
 // adjust it ±10 for qualitative factors; anything further is overruled.
 function reconcileScore(modelScore, healthScore) {
@@ -301,6 +318,11 @@ Return JSON with exactly these keys:
   "narrative": "Two paragraphs. Executive summary tone. Reference the ${usd(leakage.revenue_leakage)} leakage figure and where it comes from. Sound like McKinsey."
 }
 
+If the narrative states the CRM health score as a number, it must be the exact integer
+you put in the "score" field above — the report prints that value next to this text, so
+any other number reads as a contradiction. Write "a CRM health score of 28 out of 100"
+when your score field is 28. Do not round it and do not restate the computed ${computed.health_score ?? "input"} if you adjusted away from it.
+
 Minimum 10 quick_wins, minimum 5 automation_gaps.
 Each quick win's impact_usd must be a defensible fraction of a number given above — never a figure you invented.`;
 }
@@ -354,9 +376,14 @@ async function runClaudeAudit({ crmSummary, companyName, industry, teamSize, mon
   // Code owns the numbers. The prompt already supplies revenue_leakage, but a
   // model that drifts must not be able to change the headline figure of a paid
   // report — so overwrite rather than trust.
+  const score = reconcileScore(audit.score, computed.health_score);
+
   return {
     ...audit,
-    score: reconcileScore(audit.score, computed.health_score),
+    score,
+    // Belt-and-braces alongside the prompt rule below: the prose must not state a
+    // health score the report contradicts.
+    narrative: alignScoreInNarrative(audit.narrative, score),
     revenue_leakage: leakage.revenue_leakage,
     // Non-breaking additions: report.html ignores keys it doesn't know about.
     data_citation: leakage.data_citation,
@@ -404,5 +431,6 @@ module.exports = router;
 // directly rather than only through a live Claude call.
 module.exports.resolveLeakage = resolveLeakage;
 module.exports.reconcileScore = reconcileScore;
+module.exports.alignScoreInNarrative = alignScoreInNarrative;
 module.exports.normalizeComputed = normalizeComputed;
 module.exports.runClaudeAudit = runClaudeAudit;

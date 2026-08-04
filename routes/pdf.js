@@ -104,6 +104,22 @@ function esc(s) {
   );
 }
 
+// Hebrew reaches the report inside Claude's English prose — it quotes board, stage
+// and deal names from the prompt. An RTL run sitting in an LTR sentence with no
+// direction marks renders reordered: `'לידים 'Leads)` instead of `(Leads / לידים)`.
+//
+// Each Hebrew run is wrapped in an isolate (U+2068 FSI … U+2069 PDI) rather than the
+// RLM/LRM pair: marks only nudge the boundary, while an isolate makes the run a
+// self-contained unit so neighbouring punctuation can't be dragged into it. These are
+// invisible control characters, so no HTML escaping concerns and report.html can use
+// the same strings unchanged.
+const HEBREW_RUN_RE = /[֐-׿]+(?:[\s"'׳״.,\-–—/()]+[֐-׿]+)*/g;
+
+function bidi(text) {
+  if (text === null || text === undefined) return "";
+  return String(text).replace(HEBREW_RUN_RE, run => `⁨${run}⁩`);
+}
+
 // Short provenance label under the headline figure. Pre-v2 audits have no
 // `confidence` key and simply render without a badge.
 const CONFIDENCE_BADGES = {
@@ -124,6 +140,30 @@ function buildReportHtml(row, fullAccess) {
 
   const gradeColor = (g) => ({ A: "#10b981", B: "#3b82f6", C: "#f59e0b", D: "#ef4444", F: "#dc2626" }[g] || "#6b7280");
   const effortColor = (e) => ({ Low: "#10b981", Medium: "#f59e0b", High: "#ef4444" }[e] || "#6b7280");
+
+  // `full` renders every detail the quick win actually carries; the teaser form is
+  // title + impact only. Previously the teaser form was used for everything past the
+  // third win even for paying customers, so a $299 report detailed 3 of 12 items.
+  // Fields are emitted only when present — the flat schema ships title/impact_usd/
+  // effort/steps, but a richer object renders in full without another change here.
+  const renderQuickWin = (w, n, full) => `
+    <div class="qw-item">
+      <div class="qw-num">${n}</div>
+      <div style="flex:1">
+        <div style="font-weight:700;margin-bottom:4px">${bidi(w.title)}</div>
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+          <span class="qw-impact">+$${(w.impact_usd || 0).toLocaleString()}/yr</span>
+          ${full && w.effort ? `<span class="effort-badge" style="background:${effortColor(w.effort)}22;color:${effortColor(w.effort)}">${w.effort} Effort</span>` : ""}
+          ${full && w.timeline ? `<span class="effort-badge" style="background:#f3f4f6;color:#4b5563">${bidi(w.timeline)}</span>` : ""}
+          ${full && w.owner ? `<span class="effort-badge" style="background:#f3f4f6;color:#4b5563">Owner: ${bidi(w.owner)}</span>` : ""}
+        </div>
+        ${full && w.problem ? `<div style="font-size:12px;color:#6b7280;margin-bottom:4px"><strong>Problem:</strong> ${bidi(w.problem)}</div>` : ""}
+        ${full && w.solution ? `<div style="font-size:12px;color:#6b7280;margin-bottom:4px"><strong>Solution:</strong> ${bidi(w.solution)}</div>` : ""}
+        ${full && (w.steps || []).length ? `<ul style="padding-left:16px;font-size:12px;color:#6b7280">
+          ${w.steps.map(s => `<li>${bidi(s)}</li>`).join("")}
+        </ul>` : ""}
+      </div>
+    </div>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -157,7 +197,9 @@ function buildReportHtml(row, fullAccess) {
   .grade-card { background: #f9fafb; border-radius: 10px; padding: 16px 20px; }
   .grade-val { font-size: 36px; font-weight: 800; }
   .grade-label { font-size: 11px; color: #6b7280; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .qw-item { padding: 14px 0; border-bottom: 1px solid #f3f4f6; display: flex; gap: 12px; }
+  /* A full report can carry 12 detailed wins, so the list now spills past one page.
+     Keep an individual win from being split across the break. */
+  .qw-item { padding: 14px 0; border-bottom: 1px solid #f3f4f6; display: flex; gap: 12px; page-break-inside: avoid; break-inside: avoid; }
   .qw-num { background: #0a0a0a; color: #fff; width: 24px; height: 24px; border-radius: 50%; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
   .qw-impact { font-weight: 700; color: #e11d48; }
   .effort-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; }
@@ -182,14 +224,14 @@ function buildReportHtml(row, fullAccess) {
       <div style="font-size:11px;color:#9ca3af;margin-top:2px">CRM Intelligence Platform</div>
     </div>
     <div style="text-align:right;font-size:11px;color:#9ca3af">
-      <div>${row.company_name || "Company"}</div>
+      <div>${bidi(row.company_name || "Company")}</div>
       <div>Generated ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</div>
       <div>Report ID: ${row.audit_id}</div>
     </div>
   </div>
 
   <h1 style="margin-bottom:6px">CRM Health Report</h1>
-  <div style="font-size:15px;color:#6b7280;margin-bottom:32px">${row.company_name || "Company"} · Monday.com Audit</div>
+  <div style="font-size:15px;color:#6b7280;margin-bottom:32px">${bidi(row.company_name || "Company")} · Monday.com Audit</div>
 
   <div style="display:flex;gap:24px;align-items:flex-start;margin-bottom:32px">
     <div class="score-box">
@@ -204,7 +246,7 @@ function buildReportHtml(row, fullAccess) {
         // v2 states exactly where the number came from. Pre-v2 audits fall back to
         // the original generic line rather than showing nothing.
         a.data_citation
-          ? esc(a.data_citation)
+          ? bidi(esc(a.data_citation))
           : "Based on pipeline analysis, data quality gaps, and process inefficiencies"
       }</div>
       ${
@@ -218,7 +260,7 @@ function buildReportHtml(row, fullAccess) {
   <div class="section">
     <h2>Critical Findings</h2>
     <ul class="issue-list">
-      ${(a.critical_issues || []).map(i => `<li>${i}</li>`).join("")}
+      ${(a.critical_issues || []).map(i => `<li>${bidi(i)}</li>`).join("")}
     </ul>
   </div>
 
@@ -236,35 +278,15 @@ function buildReportHtml(row, fullAccess) {
     </div>
   </div>
 
-  <div class="narrative">${(a.narrative || "").replace(/\n/g, "<br>")}</div>
+  <div class="narrative">${bidi(a.narrative || "").replace(/\n/g, "<br>")}</div>
 </div>
 
-<!-- PAGE 2: Quick Wins (first 3 visible, rest locked) -->
+<!-- PAGE 2: Quick Wins — every one rendered in full for paying customers -->
 <div class="page">
-  <h2 style="margin-bottom:24px">Top 10 Quick Wins — Ranked by ROI</h2>
-  ${qw.slice(0, 3).map((w, i) => `
-    <div class="qw-item">
-      <div class="qw-num">${i + 1}</div>
-      <div style="flex:1">
-        <div style="font-weight:700;margin-bottom:4px">${w.title}</div>
-        <div style="display:flex;gap:12px;align-items:center;margin-bottom:6px">
-          <span class="qw-impact">+$${(w.impact_usd || 0).toLocaleString()}/yr</span>
-          <span class="effort-badge" style="background:${effortColor(w.effort)}22;color:${effortColor(w.effort)}">${w.effort} Effort</span>
-        </div>
-        <ul style="padding-left:16px;font-size:12px;color:#6b7280">
-          ${(w.steps || []).map(s => `<li>${s}</li>`).join("")}
-        </ul>
-      </div>
-    </div>`).join("")}
+  <h2 style="margin-bottom:24px">${qw.length} Quick Wins — Ranked by ROI</h2>
+  ${(fullAccess ? qw : qw.slice(0, 3)).map((w, i) => renderQuickWin(w, i + 1, true)).join("")}
 
-  ${locked(qw.slice(3).map((w, i) => `
-    <div class="qw-item">
-      <div class="qw-num">${i + 4}</div>
-      <div style="flex:1">
-        <div style="font-weight:700;margin-bottom:4px">${w.title}</div>
-        <span class="qw-impact">+$${(w.impact_usd || 0).toLocaleString()}/yr</span>
-      </div>
-    </div>`).join(""))}
+  ${fullAccess ? "" : locked(qw.slice(3).map((w, i) => renderQuickWin(w, i + 4, false)).join(""))}
 </div>
 
 <!-- PAGE 3: Automation Gaps + Roadmap (locked if not paid) -->
@@ -274,7 +296,7 @@ function buildReportHtml(row, fullAccess) {
       <h2>Automation Gaps Analysis</h2>
       ${gaps.map(g => `
         <div style="padding:12px 0;border-bottom:1px solid #f3f4f6;display:flex;justify-content:space-between;align-items:center">
-          <div style="flex:1">${g.description}</div>
+          <div style="flex:1">${bidi(g.description)}</div>
           <div style="color:#e11d48;font-weight:700;white-space:nowrap;margin-left:16px">${g.time_saved_hours_month}h/mo saved</div>
         </div>`).join("")}
     </div>
@@ -284,15 +306,15 @@ function buildReportHtml(row, fullAccess) {
       <div class="roadmap-grid">
         <div class="roadmap-col">
           <h3>Month 1: Foundation</h3>
-          <ul>${(roadmap.month1 || []).map(i => `<li>${i}</li>`).join("")}</ul>
+          <ul>${(roadmap.month1 || []).map(i => `<li>${bidi(i)}</li>`).join("")}</ul>
         </div>
         <div class="roadmap-col">
           <h3>Month 2: Automation</h3>
-          <ul>${(roadmap.month2 || []).map(i => `<li>${i}</li>`).join("")}</ul>
+          <ul>${(roadmap.month2 || []).map(i => `<li>${bidi(i)}</li>`).join("")}</ul>
         </div>
         <div class="roadmap-col">
           <h3>Month 3: Optimization</h3>
-          <ul>${(roadmap.month3 || []).map(i => `<li>${i}</li>`).join("")}</ul>
+          <ul>${(roadmap.month3 || []).map(i => `<li>${bidi(i)}</li>`).join("")}</ul>
         </div>
       </div>
     </div>
