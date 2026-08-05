@@ -70,6 +70,54 @@ function fieldsFromCode() {
   };
 }
 
+// Field names alone miss a whole class of drift: flip STALL_LOSS_RATE from 0.6 to
+// 0.5 and every name still matches while the documented figure is now wrong. These
+// two constants are quoted in the doc, so they can be compared directly.
+const CONSTANTS = [
+  { exported: "STALL_LOSS_RATE", field: "stall_loss_rate" },
+  { exported: "STALE_DAYS", field: "stale_days_threshold" },
+];
+
+function checkConstants(doc) {
+  const code = require(process.env.CRM_MODULE || "../routes/crm.js");
+  const problems = [];
+
+  for (const { exported, field } of CONSTANTS) {
+    const actual = code[exported];
+    if (actual === undefined) {
+      problems.push(`${exported} is no longer exported from crm.js`);
+      continue;
+    }
+    // The table row states the value in its second cell: | `stall_loss_rate` | `0.6` | … |
+    // Match on the FIRST cell: a field name also appears inside other rows'
+    // explanations, and matching anywhere picks up the wrong row.
+    const row = doc.split(/\r?\n/).find(l =>
+      l.trimStart().startsWith("|") && (l.split("|")[1] || "").includes(`\`${field}\``)
+    );
+    if (!row) {
+      problems.push(`${field} has no row in the field table`);
+      continue;
+    }
+    const stated = (row.split("|")[2] || "").match(/`([\d.]+)`/);
+    if (!stated) {
+      problems.push(`${field} row does not state a numeric value`);
+    } else if (Number(stated[1]) !== actual) {
+      problems.push(`${field}: doc says ${stated[1]}, code says ${actual}`);
+    }
+  }
+
+  // The headline formula is spelled out in prose too, and is the line a reader is
+  // most likely to quote. Keep it honest as well.
+  const formula = doc.match(/stuck_deals_value\s*[×x*]\s*([\d.]+)/);
+  if (!formula) {
+    problems.push("the revenue_leakage formula line is missing from the doc");
+  } else if (Number(formula[1]) !== code.STALL_LOSS_RATE) {
+    problems.push(`formula line says × ${formula[1]}, STALL_LOSS_RATE is ${code.STALL_LOSS_RATE}`);
+  }
+
+  return problems;
+}
+
 function fieldsFromDoc() {
   if (!fs.existsSync(DOC)) throw new Error(`doc not found: ${DOC}`);
   const lines = fs.readFileSync(DOC, "utf8").split(/\r?\n/);
@@ -94,6 +142,7 @@ function fieldsFromDoc() {
 function main() {
   const code = fieldsFromCode();
   const doc = fieldsFromDoc();
+  const constantProblems = checkConstants(fs.readFileSync(DOC, "utf8"));
 
   const missingFromDoc = code.populated.filter(f => !doc.includes(f));
   const staleInDoc = doc.filter(f => !code.populated.includes(f));
@@ -118,10 +167,11 @@ function main() {
     report("IN CODE, NOT DOCUMENTED — add a row to the table:", missingFromDoc),
     report("IN THE DOC, NOT IN CODE — the field was removed or renamed:", staleInDoc),
     report("THE TWO RETURN PATHS DISAGREE:", emptyPathDrift),
+    report("CONSTANTS DISAGREE WITH THE DOC:", constantProblems),
   ].every(Boolean);
 
   if (ok) {
-    console.log("OK — the field table matches computeCrmMetrics().");
+    console.log(`OK — field table matches computeCrmMetrics(), and ${CONSTANTS.map(c => c.exported).join(" / ")} match the documented values.`);
     process.exit(0);
   }
   console.log("Mismatch. The code is the source of truth; update the doc to match.");
