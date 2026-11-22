@@ -131,7 +131,7 @@ function buildDeliveryEmail({ company, pdfUrl, auditId }) {
   <div style="padding:32px">
     <h2 style="font-size:20px;font-weight:700;color:#111;margin:0 0 8px">Your Full CRM Audit Report is Ready</h2>
     <p style="font-size:14px;color:#6b7280;margin:0 0 24px">Company: <strong>${company}</strong></p>
-    <p style="font-size:15px;color:#374151;line-height:1.6;margin:0 0 24px">Your complete 20+ page consulting-grade report is attached. It includes the full revenue leakage analysis, all 10 quick wins with implementation steps, your 90-day roadmap, and automation gap analysis.</p>
+    <p style="font-size:15px;color:#374151;line-height:1.6;margin:0 0 24px">Your complete consulting-grade report is ready — the button below opens it. It includes the full revenue leakage analysis, every quick win we found with implementation steps, your 90-day roadmap, and automation gap analysis.</p>
     <a href="${pdfUrl}" style="display:inline-block;background:#e11d48;color:#fff;padding:14px 28px;border-radius:10px;font-size:14px;font-weight:700;text-decoration:none;margin-bottom:24px">Download Full Report (PDF) →</a>
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-top:8px">
       <p style="font-size:14px;font-weight:700;color:#111;margin:0 0 6px">Want help implementing these changes?</p>
