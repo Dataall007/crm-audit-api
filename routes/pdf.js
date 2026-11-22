@@ -183,7 +183,7 @@ function buildReportHtml(row, fullAccess) {
     : `<div style="border:1.5px dashed #d1d5db;border-radius:12px;background:#f9fafb;padding:48px 32px;text-align:center;page-break-inside:avoid">
          <div style="font-size:32px;margin-bottom:10px">🔒</div>
          ${teaser ? `<div style="font-size:14px;font-weight:700;color:#374151;margin-bottom:6px">${teaser}</div>` : ""}
-         <div style="font-size:15px;font-weight:800;color:#0a0a0a;margin-bottom:4px">Unlock Full Report — $299</div>
+         <div style="font-size:15px;font-weight:800;color:#0a0a0a;margin-bottom:4px">Unlock Full Report — $99</div>
          <div style="font-size:12px;color:#6b7280">agent7d.com/tools/crm-audit</div>
        </div>`;
 
